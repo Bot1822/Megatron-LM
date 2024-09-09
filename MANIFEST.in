@@ -1,2 +1,5 @@
 include megatron/core/requirements.txt
-include megatron/core/README.md
+
+include *.txt README.md
+
+recursive-include megatron/ *
