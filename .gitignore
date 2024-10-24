@@ -8,3 +8,5 @@ slurm*
 logs
 .vscode
 local/
+model_structure.csv
+output/
