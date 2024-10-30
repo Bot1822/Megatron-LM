@@ -90,8 +90,9 @@ def _vocab_size_with_padding(orig_vocab_size, args):
     after = orig_vocab_size
     multiple = args.make_vocab_size_divisible_by * \
         args.tensor_model_parallel_size
-    while (after % multiple) != 0:
-        after += 1
+    # while (after % multiple) != 0:
+    #     after += 1
+    after += (multiple - after % multiple)
     if args.rank == 0:
         print(' > padded vocab (size: {}) with {} dummy tokens '
               '(new size: {})'.format(

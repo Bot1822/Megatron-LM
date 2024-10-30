@@ -652,12 +652,22 @@ def train_step(forward_step_func, data_iterator,
         return loss_reduced, skipped_iter, grad_norm, num_zeros_in_grad
     return {}, skipped_iter, grad_norm, num_zeros_in_grad
 
-
+from megatron.training.utils import throughput_calculator
 def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_rate, iteration,
                  loss_scale, report_memory_flag, skipped_iter,
                  grad_norm, params_norm, num_zeros_in_grad):
     """Log training information such as losses, timing, ...."""
     args = get_args()
+    # BIRENTECH ----
+    args.actual_seq_length = args.seq_length
+    if not hasattr(args, 'consumed_train_tokens'):
+        args.consumed_train_tokens = args.consumed_train_samples * args.actual_seq_length
+        # new samples has been updated, do not need add more
+    else:
+        new_samples = mpu.get_data_parallel_world_size() * args.micro_batch_size * get_num_microbatches()
+        args.consumed_train_tokens += new_samples * args.actual_seq_length
+    seq_len = args.actual_seq_length
+    # ---- BIRENTECH
     timers = get_timers()
     writer = get_tensorboard_writer()
     wandb_writer = get_wandb_writer()
@@ -813,6 +823,10 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
     if iteration % args.log_interval == 0:
         elapsed_time = timers('interval-time').elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
+        
+        # BIRENTECH ----
+        samples_per_sec, tflops, tgs = throughput_calculator(args, elapsed_time, total_iterations)
+        # ---- BIRENTECH
 
         throughput = num_floating_point_operations(args, batch_size) / (
             elapsed_time_per_iteration * 10**12 * args.world_size)
@@ -826,6 +840,24 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
             if wandb_writer:
                 wandb_writer.log({'iteration-time': elapsed_time_per_iteration},
                                  iteration)
+        
+        # BIRENTECH ---- 
+        if writer and is_last_rank():
+            writer.add_scalar('iteration-time/iteration-time', elapsed_time_per_iteration, iteration)
+            writer.add_scalar(
+                'iteration-time/iteration-time vs samples',
+                elapsed_time_per_iteration,
+                args.consumed_train_samples,
+            )
+            writer.add_scalar(
+                'iteration-time/iteration-time vs tokens',
+                elapsed_time_per_iteration,
+                args.consumed_train_tokens,
+            )
+            writer.add_scalar('iteration-TGS/iteration-TGS', tgs, iteration)
+            writer.add_scalar('iteration-TFLOPs/iteration-TFLOPs', tflops, iteration)
+        # ---- BIRENTECH
+                
         log_string = f" [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
         log_string += ' iteration {:8d}/{:8d} |'.format(
             iteration, args.train_iters)
@@ -865,10 +897,18 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
             log_string += ' num zeros: {:.1f} |'.format(num_zeros_in_grad)
         if params_norm is not None:
             log_string += ' params norm: {:.3f} |'.format(params_norm)
+        # BIRENTECH ----
+        log_string += ' actual seqlen: {:5d} |'.format(seq_len)
+        # ---- BIRENTECH
         log_string += ' number of skipped iterations: {:3d} |'.format(
             total_loss_dict[skipped_iters_key])
         log_string += ' number of nan iterations: {:3d} |'.format(
             total_loss_dict[nan_iters_key])
+        # BIRENTECH ----
+        log_string += ' samples per second: {:.3f} |'.format(samples_per_sec)
+        log_string += ' TFLOPs: {:.2f} |'.format(tflops)
+        log_string += ' TGS: {:.2f} |'.format(tgs)
+	    # ---- BIRENTECH
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0
