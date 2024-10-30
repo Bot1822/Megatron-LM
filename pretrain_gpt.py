@@ -32,6 +32,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
 )
 
+from hgct.core import hybridlink
 
 stimer = StragglerDetector()
 
@@ -57,6 +58,9 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
         config = core_transformer_config_from_yaml(args, "language_model")
     else:
         config = core_transformer_config_from_args(args)
+        
+    # NOTE temprarily for hgct
+    config.batch_p2p_comm = False
 
     if args.use_legacy_models:
         model = megatron.legacy.model.GPTModel(
