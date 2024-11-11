@@ -51,6 +51,29 @@ def get_num_layers_to_build(config: TransformerConfig) -> int:
         config.num_layers // parallel_state.get_pipeline_model_parallel_world_size()
     )
 
+    import os
+    _pipline_world_size = parallel_state.get_pipeline_model_parallel_world_size()
+    _pipline_rank = parallel_state.get_pipeline_model_parallel_rank()
+    _stage_layers = os.getenv('NUM_LAYERS_PER_STAGE')
+    if _stage_layers is not None:
+        try:
+            _num_layers_per_stage = [int(x) for x in _stage_layers.split(',')]
+        except Exception as e:
+            print(f'Exception: {e}, Incorrect use of env NUM_LAYERS_PER_STAGE, '\
+                f'e.g. when pipeline stages is 2 and total layers is 8, '\
+                f'you can set NUM_LAYERS_PER_STAGE=5,3 or 6,2 or ... '\
+                f'this env generally used for non-equal partition')
+            exit(1)
+
+        assert len(_num_layers_per_stage) == _pipline_world_size, \
+            f'length of NUM_LAYERS_PER_STAGE is {len(_num_layers_per_stage)} does not match {_pipline_world_size}'
+
+        assert sum(_num_layers_per_stage) == config.num_layers, \
+            f'sum of NUM_LAYERS_PER_STAGE is {sum(_num_layers_per_stage)} does not match {config.num_layers}'
+
+        num_layers_per_pipeline_rank = _num_layers_per_stage[_pipline_rank]
+    print(f'rank={torch.distributed.get_rank()} stage={_pipline_rank} num_layers={num_layers_per_pipeline_rank}')      
+
     if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
         # Interleaved pipeline parallelism:
         # Number of layers in each model chunk is the number of layers in the stage,
